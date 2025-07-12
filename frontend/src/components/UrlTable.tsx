@@ -259,25 +259,25 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
         <table className="url-table">
           <thead>
             <tr>
-              <th>
+              <th className="checkbox-header">
                 <input
                   type="checkbox"
                   checked={selectedUrls.size === data.length && data.length > 0}
                   onChange={toggleSelectAll}
                 />
               </th>
-              <th>URL</th>
-              <th>Title</th>
-              <th>Status</th>
-              <th>Links</th>
-              <th>Created</th>
-              <th>Actions</th>
+              <th className="url-header">🌐 URL</th>
+              <th className="title-header">📄 Title</th>
+              <th className="status-header">📊 Status</th>
+              <th className="links-header">🔗 Links Analysis</th>
+              <th className="date-header">📅 Created</th>
+              <th className="actions-header">⚙️ Actions</th>
             </tr>
           </thead>
           <tbody>
             {data.map((url) => (
               <tr key={url.id}>
-                <td>
+                <td className="checkbox-cell">
                   <input
                     type="checkbox"
                     checked={selectedUrls.has(url.id)}
@@ -285,33 +285,52 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
                   />
                 </td>
                 <td>
-                  <a href={url.url} target="_blank" rel="noopener noreferrer">
-                    {url.url}
+                  <a href={url.url} target="_blank" rel="noopener noreferrer" className="url-link">
+                    {url.url.length > 40 ? `${url.url.substring(0, 40)}...` : url.url}
                   </a>
                 </td>
-                <td>
-                  <Link to={`/url/${url.id}`} className="url-title-link">
-                    {url.title || 'No title'}
+                <td className="title-cell">
+                  {url.title || 'No title'}
+                </td>
+                <td className="status-cell">
+                  {getStatusDisplay(url.status)}
+                </td>
+                <td className="links-cell">
+                  <div className="links-stats">
+                    <span className="internal-links">
+                      <span className="label">Internal:</span>
+                      <span className="count">{url.internal_links}</span>
+                    </span>
+                    <span className="external-links">
+                      <span className="label">External:</span>
+                      <span className="count">{url.external_links}</span>
+                    </span>
+                    {url.broken_links > 0 && (
+                      <span className="broken-links">
+                        <span className="label">Broken:</span>
+                        <span className="count">{url.broken_links}</span>
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="date-cell">{formatDate(url.created_at)}</td>
+                <td className="actions-cell">
+                  <Link to={`/url/${url.id}`} className="view-details-btn">
+                    📊 Details
                   </Link>
-                </td>
-                <td>{getStatusDisplay(url.status)}</td>
-                <td>
-                  <span>Internal: {url.internal_links}</span>
-                  <span>External: {url.external_links}</span>
-                </td>
-                <td>{formatDate(url.created_at)}</td>
-                <td>
                   <button
                     onClick={() => handleReanalyze(url.id)}
                     className="reanalyze-btn"
+                    title="Reanalyze this URL"
                   >
-                    Reanalyze
+                    🔄 Reanalyze
                   </button>
                   <button
                     onClick={() => handleDelete(url.id)}
                     className="delete-btn"
+                    title="Delete this URL"
                   >
-                    Delete
+                    🗑️ Delete
                   </button>
                 </td>
               </tr>
