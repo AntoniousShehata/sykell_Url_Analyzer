@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, forwardRef, useImperativeHandle, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { fetchUrls, deleteUrl, reanalyzeUrl, bulkDeleteUrls, bulkReanalyzeUrls, UrlData } from '../api/api';
+import { fetchUrls, deleteUrl, reanalyzeUrl, bulkDeleteUrls, UrlData } from '../api/api';
 
 interface PaginationInfo {
   page: number;
@@ -116,6 +116,7 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
     try {
       setError(null);
       await deleteUrl(id);
+      setSelectedUrls(new Set()); // Clear selected URLs to hide bulk actions
       refreshFromFirstPage();
     } catch (err) {
       console.error('Error deleting URL:', err);
@@ -144,7 +145,7 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
     try {
       setError(null);
       await bulkDeleteUrls(Array.from(selectedUrls));
-      setSelectedUrls(new Set());
+      setSelectedUrls(new Set()); // This will hide the bulk actions
       refreshFromFirstPage();
     } catch (err) {
       console.error('Error bulk deleting URLs:', err);
@@ -152,23 +153,7 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
     }
   };
 
-  const handleBulkReanalyze = async () => {
-    if (selectedUrls.size === 0) return;
 
-    try {
-      setError(null);
-      await bulkReanalyzeUrls(Array.from(selectedUrls));
-      setSelectedUrls(new Set());
-      
-      setTimeout(() => {
-        refreshFromFirstPage();
-      }, 5000);
-      
-    } catch (err) {
-      console.error('Error bulk reanalyzing URLs:', err);
-      setError('Failed to reanalyze URLs');
-    }
-  };
 
   const toggleSelectAll = () => {
     if (selectedUrls.size === data.length) {
@@ -205,6 +190,16 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString();
+  };
+
+  const getWebsiteName = (url: string) => {
+    try {
+      return new URL(url).hostname;
+    } catch (error) {
+      // If URL parsing fails, try to extract domain from string
+      const match = url.match(/^(?:https?:\/\/)?(?:www\.)?([^\/]+)/);
+      return match ? match[1] : 'Unknown';
+    }
   };
 
   if (loading && data.length === 0) {
@@ -248,9 +243,6 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
             <button onClick={handleBulkDelete} className="bulk-delete-btn">
               Delete Selected ({selectedUrls.size})
             </button>
-            <button onClick={handleBulkReanalyze} className="bulk-reanalyze-btn">
-              Reanalyze Selected ({selectedUrls.size})
-            </button>
           </div>
         )}
       </div>
@@ -266,7 +258,6 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
                   onChange={toggleSelectAll}
                 />
               </th>
-              <th className="url-header">🌐 URL</th>
               <th className="title-header">📄 Title</th>
               <th className="status-header">📊 Status</th>
               <th className="links-header">🔗 Links Analysis</th>
@@ -284,13 +275,13 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
                     onChange={() => toggleSelectUrl(url.id)}
                   />
                 </td>
-                <td>
-                  <a href={url.url} target="_blank" rel="noopener noreferrer" className="url-link">
-                    {url.url.length > 40 ? `${url.url.substring(0, 40)}...` : url.url}
-                  </a>
-                </td>
                 <td className="title-cell">
-                  {url.title || 'No title'}
+                  <a href={url.url} target="_blank" rel="noopener noreferrer" className="title-link">
+                    <div className="title-content">
+                      <div className="title-text">{url.title || 'No title'}</div>
+                      <div className="website-name">{getWebsiteName(url.url)}</div>
+                    </div>
+                  </a>
                 </td>
                 <td className="status-cell">
                   {getStatusDisplay(url.status)}
