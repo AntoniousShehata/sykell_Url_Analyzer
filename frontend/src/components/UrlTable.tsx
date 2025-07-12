@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, forwardRef, useImperativeHandle, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { fetchUrls, deleteUrl, reanalyzeUrl, bulkDeleteUrls, bulkReanalyzeUrls, UrlData } from '../api/api';
 
 interface PaginationInfo {
@@ -288,7 +289,11 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
                     {url.url}
                   </a>
                 </td>
-                <td>{url.title || 'No title'}</td>
+                <td>
+                  <Link to={`/url/${url.id}`} className="url-title-link">
+                    {url.title || 'No title'}
+                  </Link>
+                </td>
                 <td>{getStatusDisplay(url.status)}</td>
                 <td>
                   <span>Internal: {url.internal_links}</span>
