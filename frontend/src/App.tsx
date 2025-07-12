@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import UrlTable, { UrlTableRef } from './components/UrlTable';
 import UrlForm from './components/UrlForm';
 import AuthForm from './components/AuthForm';
+import UrlDetails from './components/UrlDetails';
+import Dashboard from './components/Dashboard';
 import { UrlData, isAuthenticated, logout } from './api/api';
 import './App.css';
 
@@ -41,19 +44,22 @@ function App() {
   }
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>URL Analysis Tool</h1>
-        <button onClick={handleLogout} className="logout-btn">
-          Logout
-        </button>
-      </header>
-      
-      <div className="main-content">
-        <UrlForm onUrlAdded={handleUrlAdded} />
-        <UrlTable key={refreshKey} ref={urlTableRef} />
+    <Router>
+      <div className="App">
+        <header className="App-header">
+          <h1>URL Analysis Tool</h1>
+          <button onClick={handleLogout} className="logout-btn">
+            Logout
+          </button>
+        </header>
+        
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/url/:id" element={<UrlDetails />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </div>
-    </div>
+    </Router>
   );
 }
 
