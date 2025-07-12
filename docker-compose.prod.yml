@@ -1,0 +1,58 @@
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: sykell-mysql-prod
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-sykell_db}
+      MYSQL_USER: ${MYSQL_USER:-sykell_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-sykell_pass}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - sykell-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sykell-backend-prod
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE:-sykell_db}
+      DB_USER: ${MYSQL_USER:-sykell_user}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-sykell_pass}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mysql
+    networks:
+      - sykell-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sykell-frontend-prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - sykell-network
+
+volumes:
+  mysql-data:
+
+networks:
+  sykell-network:
+    driver: bridge 
