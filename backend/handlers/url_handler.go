@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"sykell-analyze/backend/config"
@@ -12,6 +15,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// normalizeURL ensures the URL has a proper protocol
+func normalizeURL(inputURL string) string {
+	// Trim whitespace
+	inputURL = strings.TrimSpace(inputURL)
+
+	// If URL doesn't start with http:// or https://, add https://
+	if !strings.HasPrefix(inputURL, "http://") && !strings.HasPrefix(inputURL, "https://") {
+		inputURL = "https://" + inputURL
+	}
+
+	return inputURL
+}
 
 // AddUrl handles adding a new URL for analysis
 func AddUrl(c *gin.Context) {
@@ -45,9 +61,22 @@ func AddUrl(c *gin.Context) {
 		return
 	}
 
+	// Normalize the URL
+	normalizedURL := normalizeURL(input.URL)
+
+	// Validate that the normalized URL is valid
+	_, err := url.Parse(normalizedURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid URL format",
+			"details": err.Error(),
+		})
+		return
+	}
+
 	// Check if URL already exists for this user
 	var existingID int
-	err := config.DB.QueryRow("SELECT id FROM urls WHERE url = ? AND user_id = ?", input.URL, userID).Scan(&existingID)
+	err = config.DB.QueryRow("SELECT id FROM urls WHERE url = ? AND user_id = ?", normalizedURL, userID).Scan(&existingID)
 	if err == nil {
 		c.JSON(http.StatusConflict, gin.H{
 			"error": "URL already exists for this user",
@@ -69,7 +98,7 @@ func AddUrl(c *gin.Context) {
 	`
 
 	now := time.Now()
-	result, err := config.DB.Exec(query, userID, input.URL, now, now)
+	result, err := config.DB.Exec(query, userID, normalizedURL, now, now)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -84,14 +113,25 @@ func AddUrl(c *gin.Context) {
 
 	// Start crawling in background
 	go func() {
-		crawlAndUpdateURL(int(id), input.URL)
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("PANIC in crawlAndUpdateURL: %v\n", r)
+				// Update status to error on panic
+				config.DB.Exec(
+					"UPDATE urls SET status = 'error', error_message = ?, updated_at = ? WHERE id = ?",
+					fmt.Sprintf("Panic during analysis: %v", r), time.Now(), int(id),
+				)
+			}
+		}()
+		fmt.Printf("DEBUG: Starting crawl for URL ID %d: %s\n", int(id), normalizedURL)
+		crawlAndUpdateURL(int(id), normalizedURL)
 	}()
 
 	// Create response object
 	urlData := models.Url{
 		ID:        int(id),
 		UserID:    userID.(int),
-		Url:       input.URL,
+		Url:       normalizedURL,
 		Status:    "queued",
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -119,6 +159,15 @@ func crawlAndUpdateURL(urlID int, url string) {
 		return
 	}
 
+	// Debug logging
+	fmt.Printf("DEBUG: Crawl result for URL %s (ID: %d):\n", url, urlID)
+	fmt.Printf("  Title: %s\n", crawlResult.Title)
+	fmt.Printf("  Internal Links: %d\n", crawlResult.InternalLinks)
+	fmt.Printf("  External Links: %d\n", crawlResult.ExternalLinks)
+	fmt.Printf("  H1: %d, H2: %d, H3: %d\n", crawlResult.H1, crawlResult.H2, crawlResult.H3)
+	fmt.Printf("  HTML Version: %s\n", crawlResult.HtmlVersion)
+	fmt.Printf("  Has Login Form: %t\n", crawlResult.HasLoginForm)
+
 	// Update with analysis results
 	query := `
 		UPDATE urls SET 
@@ -128,7 +177,7 @@ func crawlAndUpdateURL(urlID int, url string) {
 		WHERE id = ?
 	`
 
-	config.DB.Exec(query,
+	result, err := config.DB.Exec(query,
 		crawlResult.HtmlVersion,
 		crawlResult.Title,
 		crawlResult.H1,
@@ -141,6 +190,18 @@ func crawlAndUpdateURL(urlID int, url string) {
 		time.Now(),
 		urlID,
 	)
+	if err != nil {
+		// If update fails, mark as error
+		fmt.Printf("DEBUG: Database update failed: %v\n", err)
+		config.DB.Exec(
+			"UPDATE urls SET status = 'error', error_message = ?, updated_at = ? WHERE id = ?",
+			"Failed to save analysis results: "+err.Error(), time.Now(), urlID,
+		)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	fmt.Printf("DEBUG: Database update successful, rows affected: %d\n", rowsAffected)
 
 	// Store broken links details
 	for _, brokenLink := range crawlResult.BrokenLinksDetails {
@@ -412,7 +473,18 @@ func ReanalyzeUrl(c *gin.Context) {
 
 	// Start crawling in background
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("PANIC in reanalyze crawlAndUpdateURL: %v\n", r)
+				// Update status to error on panic
+				config.DB.Exec(
+					"UPDATE urls SET status = 'error', error_message = ?, updated_at = ? WHERE id = ?",
+					fmt.Sprintf("Panic during reanalysis: %v", r), time.Now(), id,
+				)
+			}
+		}()
 		urlID, _ := strconv.Atoi(id)
+		fmt.Printf("DEBUG: Starting reanalyze for URL ID %d: %s\n", urlID, url)
 		crawlAndUpdateURL(urlID, url)
 	}()
 
@@ -553,6 +625,17 @@ func BulkReanalyze(c *gin.Context) {
 
 		// Start crawling in background
 		go func(id int, url string) {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Printf("PANIC in bulk reanalyze crawlAndUpdateURL: %v\n", r)
+					// Update status to error on panic
+					config.DB.Exec(
+						"UPDATE urls SET status = 'error', error_message = ?, updated_at = ? WHERE id = ?",
+						fmt.Sprintf("Panic during bulk reanalysis: %v", r), time.Now(), id,
+					)
+				}
+			}()
+			fmt.Printf("DEBUG: Starting bulk reanalyze for URL ID %d: %s\n", id, url)
 			crawlAndUpdateURL(id, url)
 		}(item.ID, item.URL)
 	}

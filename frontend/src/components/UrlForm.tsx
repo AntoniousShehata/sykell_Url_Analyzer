@@ -19,8 +19,14 @@ const UrlForm: React.FC<UrlFormProps> = ({ onUrlAdded }) => {
       return;
     }
 
+    // Basic URL validation
+    let validUrl = url.trim();
+    if (!validUrl.startsWith('http://') && !validUrl.startsWith('https://')) {
+      validUrl = 'https://' + validUrl;
+    }
+
     try {
-      new URL(url);
+      new URL(validUrl);
     } catch {
       setError('Please enter a valid URL');
       return;
@@ -31,16 +37,26 @@ const UrlForm: React.FC<UrlFormProps> = ({ onUrlAdded }) => {
     setSuccess('');
 
     try {
-      const newUrl = await addUrl(url);
-      setSuccess('URL submitted successfully! Analysis in progress...');
+      const newUrl = await addUrl(validUrl);
+      setSuccess('URL added successfully! Analysis started...');
       setUrl('');
+      
+      // Immediately notify parent component
       onUrlAdded(newUrl);
       
+      // Clear success message after 3 seconds
       setTimeout(() => {
         setSuccess('');
-      }, 5000);
+      }, 3000);
+      
     } catch (err: any) {
-      setError(err.message || 'Failed to analyze URL');
+      console.error('Error adding URL:', err);
+      
+      if (err.message.includes('already exists')) {
+        setError('This URL has already been analyzed');
+      } else {
+        setError(err.message || 'Failed to add URL for analysis');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -53,7 +69,7 @@ const UrlForm: React.FC<UrlFormProps> = ({ onUrlAdded }) => {
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <input
-            type="url"
+            type="text"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="Enter URL (e.g., https://example.com)"
@@ -67,7 +83,7 @@ const UrlForm: React.FC<UrlFormProps> = ({ onUrlAdded }) => {
           disabled={isLoading || !url.trim()}
           className="submit-btn"
         >
-          {isLoading ? 'Analyzing...' : 'Analyze URL'}
+          {isLoading ? 'Adding...' : 'Analyze URL'}
         </button>
       </form>
 

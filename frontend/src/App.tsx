@@ -32,14 +32,14 @@ function App() {
 
   return (
     <Router>
-      <div className="App">
-        <header className="App-header">
-          <h1>URL Analysis Tool</h1>
-          <button onClick={handleLogout} className="logout-btn">
-            Logout
-          </button>
-        </header>
-        
+    <div className="App">
+      <header className="App-header">
+        <h1>URL Analysis Tool</h1>
+        <button onClick={handleLogout} className="logout-btn">
+          Logout
+        </button>
+      </header>
+      
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/url/:id" element={<UrlDetails />} />

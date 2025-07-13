@@ -26,11 +26,16 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
     total_pages: 0
   });
   const [searchTerm, setSearchTerm] = useState('');
+  const [processingUrls, setProcessingUrls] = useState<Set<number>>(new Set());
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const loadUrls = useCallback(async (page?: number, limit?: number) => {
+  const loadUrls = useCallback(async (page?: number, limit?: number, forceRefresh = false) => {
     try {
-      setLoading(true);
+      if (forceRefresh || data.length === 0) {
+        setLoading(true);
+      }
       setError(null);
+      
       const params = {
         page: page || currentPage,
         limit: limit || pagination.per_page,
@@ -42,17 +47,49 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
       
       setPagination(prev => ({
         page: response.pagination.page,
-        per_page: prev.per_page,
+        per_page: limit || prev.per_page,
         total: response.pagination.total,
         total_pages: Math.ceil(response.pagination.total / response.pagination.limit)
       }));
+      
+      // Clear processing state for completed URLs
+      setProcessingUrls(prev => {
+        const newProcessing = new Set(prev);
+        response.data.forEach(url => {
+          if (url.status === 'completed' || url.status === 'error') {
+            newProcessing.delete(url.id);
+          }
+        });
+        return newProcessing;
+      });
+      
     } catch (err) {
       console.error('Error loading URLs:', err);
       setError('Failed to load URLs');
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchTerm]);
+  }, [currentPage, searchTerm, pagination.per_page, data.length]);
+
+  // Set up polling for real-time updates
+  useEffect(() => {
+    const hasRunningUrls = data.some(url => url.status === 'running' || url.status === 'queued');
+    
+    if (hasRunningUrls) {
+      intervalRef.current = setInterval(() => {
+        loadUrls(currentPage, pagination.per_page, false);
+      }, 3000); // Poll every 3 seconds
+    } else if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [data, loadUrls, currentPage, pagination.per_page]);
 
   useEffect(() => {
     loadUrls();
@@ -63,97 +100,125 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
     if (perPageRef.current !== pagination.per_page) {
       perPageRef.current = pagination.per_page;
       setCurrentPage(1);
-      loadUrls(1, pagination.per_page);
+      loadUrls(1, pagination.per_page, true);
     }
   }, [pagination.per_page, loadUrls]);
 
   const refreshFromFirstPage = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      setCurrentPage(1);
-      
-      const params = {
-        page: 1,
-        limit: pagination.per_page,
-        ...(searchTerm && { search: searchTerm })
-      };
-
-      const response = await fetchUrls(params);
-      setData([...response.data]);
-      
-      const newPagination = {
-        page: response.pagination.page,
-        per_page: response.pagination.limit,
-        total: response.pagination.total,
-        total_pages: Math.ceil(response.pagination.total / response.pagination.limit)
-      };
-      
-      setPagination(newPagination);
-    } catch (err) {
-      console.error('Error during refresh:', err);
-      setError('Failed to load URLs');
-    } finally {
-      setLoading(false);
-    }
-  }, [pagination.per_page, searchTerm]);
+    setCurrentPage(1);
+    await loadUrls(1, pagination.per_page, true);
+    setSelectedUrls(new Set());
+  }, [loadUrls, pagination.per_page]);
 
   useImperativeHandle(ref, () => ({
-    refresh: () => {
-      setData([]);
-      setCurrentPage(1);
-      setSelectedUrls(new Set());
-      setLoading(true);
-      setError(null);
-      
-      setTimeout(() => {
-        refreshFromFirstPage();
-      }, 100);
-    }
+    refresh: refreshFromFirstPage
   }));
 
   const handleDelete = useCallback(async (id: number) => {
     try {
       setError(null);
+      setProcessingUrls(prev => new Set(prev).add(id));
+      
       await deleteUrl(id);
-      setSelectedUrls(new Set()); // Clear selected URLs to hide bulk actions
-      refreshFromFirstPage();
+      
+      // Immediate UI update - remove the deleted item
+      setData(prev => prev.filter(url => url.id !== id));
+      setPagination(prev => ({
+        ...prev,
+        total: prev.total - 1
+      }));
+      
+      setSelectedUrls(prev => {
+        const newSelected = new Set(prev);
+        newSelected.delete(id);
+        return newSelected;
+      });
+      
+      // Refresh to get accurate data
+      setTimeout(() => {
+        refreshFromFirstPage();
+      }, 500);
+      
     } catch (err) {
       console.error('Error deleting URL:', err);
       setError('Failed to delete URL');
+    } finally {
+      setProcessingUrls(prev => {
+        const newProcessing = new Set(prev);
+        newProcessing.delete(id);
+        return newProcessing;
+      });
     }
   }, [refreshFromFirstPage]);
 
   const handleReanalyze = useCallback(async (id: number) => {
     try {
       setError(null);
+      setProcessingUrls(prev => new Set(prev).add(id));
+      
       await reanalyzeUrl(id);
       
+      // Immediate UI update - set status to queued
+      setData(prev => prev.map(url => 
+        url.id === id ? { ...url, status: 'queued' as const } : url
+      ));
+      
+      // Refresh to get updated data
       setTimeout(() => {
-        refreshFromFirstPage();
-      }, 5000);
+        loadUrls(currentPage, pagination.per_page, false);
+      }, 1000);
       
     } catch (err) {
       console.error('Error reanalyzing URL:', err);
       setError('Failed to reanalyze URL');
+    } finally {
+      setTimeout(() => {
+        setProcessingUrls(prev => {
+          const newProcessing = new Set(prev);
+          newProcessing.delete(id);
+          return newProcessing;
+        });
+      }, 1000);
     }
-  }, [refreshFromFirstPage]);
+  }, [currentPage, pagination.per_page, loadUrls]);
 
   const handleBulkDelete = async () => {
     if (selectedUrls.size === 0) return;
 
     try {
       setError(null);
-      await bulkDeleteUrls(Array.from(selectedUrls));
-      setSelectedUrls(new Set()); // This will hide the bulk actions
-      refreshFromFirstPage();
+      const idsToDelete = Array.from(selectedUrls);
+      
+      // Set processing state for all selected URLs
+      setProcessingUrls(prev => {
+        const newProcessing = new Set(prev);
+        idsToDelete.forEach(id => newProcessing.add(id));
+        return newProcessing;
+      });
+      
+      await bulkDeleteUrls(idsToDelete);
+      
+      // Immediate UI update - remove deleted items
+      setData(prev => prev.filter(url => !selectedUrls.has(url.id)));
+      setPagination(prev => ({
+        ...prev,
+        total: prev.total - selectedUrls.size
+      }));
+      
+      setSelectedUrls(new Set());
+      
+      // Refresh to get accurate data
+      setTimeout(() => {
+        refreshFromFirstPage();
+      }, 500);
+      
     } catch (err) {
       console.error('Error bulk deleting URLs:', err);
       setError('Failed to delete URLs');
+    } finally {
+      setProcessingUrls(new Set());
     }
   };
-
-
 
   const toggleSelectAll = () => {
     if (selectedUrls.size === data.length) {
@@ -173,7 +238,13 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
     setSelectedUrls(newSelected);
   };
 
-  const getStatusDisplay = (status: string) => {
+  const getStatusDisplay = (status: string, urlId: number) => {
+    const isProcessing = processingUrls.has(urlId);
+    
+    if (isProcessing) {
+      return <span style={{ color: '#3b82f6' }}>Processing...</span>;
+    }
+    
     switch (status) {
       case 'queued':
         return <span style={{ color: '#f59e0b' }}>Queued</span>;
@@ -189,17 +260,70 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffTime = Math.abs(now.getTime() - date.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    // If it's today, show relative time
+    if (diffDays === 1) {
+      const diffHours = Math.ceil(diffTime / (1000 * 60 * 60));
+      if (diffHours < 1) {
+        const diffMinutes = Math.ceil(diffTime / (1000 * 60));
+        return `${diffMinutes} minute${diffMinutes !== 1 ? 's' : ''} ago`;
+      } else if (diffHours < 24) {
+        return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+      }
+    }
+    
+    // For other dates, show friendly format
+    const options: Intl.DateTimeFormatOptions = {
+      month: 'short',
+      day: 'numeric', 
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    };
+    
+    return date.toLocaleDateString('en-US', options);
   };
 
   const getWebsiteName = (url: string) => {
     try {
-      return new URL(url).hostname;
+      const urlObj = new URL(url);
+      return urlObj.hostname.replace('www.', '');
     } catch (error) {
-      // If URL parsing fails, try to extract domain from string
-      const match = url.match(/^(?:https?:\/\/)?(?:www\.)?([^\/]+)/);
-      return match ? match[1] : 'Unknown';
+      // Fallback for malformed URLs
+      const match = url.match(/^(?:https?:\/\/)?(?:www\.)?([^/]+)/);
+      const hostname = match ? match[1] : 'Unknown';
+      return hostname.length > 30 ? hostname.substring(0, 30) + '...' : hostname;
     }
+  };
+
+  const truncateUrl = (url: string, maxLength: number = 80) => {
+    if (url.length <= maxLength) return url;
+    return url.substring(0, maxLength) + '...';
+  };
+
+  const getTitleDisplay = (title: string | null, url: string) => {
+    if (!title || title === 'No title') {
+      // Extract a readable title from URL
+      try {
+        const urlObj = new URL(url);
+        const path = urlObj.pathname;
+        if (path && path !== '/') {
+          const pathParts = path.split('/').filter(part => part);
+          if (pathParts.length > 0) {
+            return pathParts[pathParts.length - 1].replace(/[-_]/g, ' ');
+          }
+        }
+        return urlObj.hostname.replace('www.', '');
+      } catch {
+        return 'No title';
+      }
+    }
+    return title.length > 60 ? title.substring(0, 60) + '...' : title;
   };
 
   if (loading && data.length === 0) {
@@ -209,7 +333,7 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
   return (
     <div className="url-table-container">
       <div className="table-header">
-        <h2>URL Analysis Results ({pagination.total} total)</h2>
+        <h2>URL Analysis Results ({data.length} {data.length === 1 ? 'result' : 'results'})</h2>
         
         {error && (
           <div className="error-message">
@@ -240,7 +364,11 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
         
         {selectedUrls.size > 0 && (
           <div className="bulk-actions">
-            <button onClick={handleBulkDelete} className="bulk-delete-btn">
+            <button 
+              onClick={handleBulkDelete} 
+              className="bulk-delete-btn"
+              disabled={processingUrls.size > 0}
+            >
               Delete Selected ({selectedUrls.size})
             </button>
           </div>
@@ -266,40 +394,55 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
             </tr>
           </thead>
           <tbody>
-            {data.map((url) => (
-              <tr key={url.id}>
-                <td className="checkbox-cell">
-                  <input
-                    type="checkbox"
-                    checked={selectedUrls.has(url.id)}
-                    onChange={() => toggleSelectUrl(url.id)}
-                  />
+            {data.length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+                  No URLs found. Add a URL above to get started.
                 </td>
-                <td className="title-cell">
-                  <a href={url.url} target="_blank" rel="noopener noreferrer" className="title-link">
-                    <div className="title-content">
-                      <div className="title-text">{url.title || 'No title'}</div>
-                      <div className="website-name">{getWebsiteName(url.url)}</div>
-                    </div>
-                  </a>
-                </td>
+              </tr>
+            ) : (
+              data.map((url) => {
+                try {
+                  return (
+                    <tr key={url.id}>
+                      <td className="checkbox-cell">
+                        <input
+                          type="checkbox"
+                          checked={selectedUrls.has(url.id)}
+                          onChange={() => toggleSelectUrl(url.id)}
+                        />
+                      </td>
+                      <td className="title-cell">
+                        <a 
+                          href={url.url} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="title-link"
+                          title={url.title || url.url}
+                        >
+                          <div className="title-content">
+                            <div className="title-text">{getTitleDisplay(url.title, url.url)}</div>
+                            <div className="website-name">{getWebsiteName(url.url)}</div>
+                          </div>
+                        </a>
+                      </td>
                 <td className="status-cell">
-                  {getStatusDisplay(url.status)}
+                  {getStatusDisplay(url.status, url.id)}
                 </td>
                 <td className="links-cell">
                   <div className="links-stats">
                     <span className="internal-links">
                       <span className="label">Internal:</span>
-                      <span className="count">{url.internal_links}</span>
+                      <span className="count">{url.internal_links || 0}</span>
                     </span>
                     <span className="external-links">
                       <span className="label">External:</span>
-                      <span className="count">{url.external_links}</span>
+                      <span className="count">{url.external_links || 0}</span>
                     </span>
                     {url.broken_links > 0 && (
                       <span className="broken-links">
                         <span className="label">Broken:</span>
-                        <span className="count">{url.broken_links}</span>
+                        <span className="count">{url.broken_links || 0}</span>
                       </span>
                     )}
                   </div>
@@ -313,6 +456,7 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
                     onClick={() => handleReanalyze(url.id)}
                     className="reanalyze-btn"
                     title="Reanalyze this URL"
+                    disabled={processingUrls.has(url.id) || url.status === 'running'}
                   >
                     🔄 Reanalyze
                   </button>
@@ -320,12 +464,55 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
                     onClick={() => handleDelete(url.id)}
                     className="delete-btn"
                     title="Delete this URL"
+                    disabled={processingUrls.has(url.id)}
                   >
                     🗑️ Delete
                   </button>
                 </td>
               </tr>
-            ))}
+                  );
+                } catch (error) {
+                  // Handle rendering errors for problematic URLs
+                  console.error('Error rendering URL:', url.id, error);
+                  return (
+                    <tr key={url.id}>
+                      <td className="checkbox-cell">
+                        <input
+                          type="checkbox"
+                          checked={selectedUrls.has(url.id)}
+                          onChange={() => toggleSelectUrl(url.id)}
+                        />
+                      </td>
+                      <td className="title-cell">
+                        <div className="title-content">
+                          <div className="title-text">Error loading URL</div>
+                          <div className="website-name">Problem with URL data</div>
+                        </div>
+                      </td>
+                      <td className="status-cell">
+                        <span style={{ color: '#ef4444' }}>Error</span>
+                      </td>
+                      <td className="links-cell">
+                        <div className="links-stats">
+                          <span>Unable to display</span>
+                        </div>
+                      </td>
+                      <td className="date-cell">-</td>
+                      <td className="actions-cell">
+                        <button
+                          onClick={() => handleDelete(url.id)}
+                          className="delete-btn"
+                          title="Delete this URL"
+                          disabled={processingUrls.has(url.id)}
+                        >
+                          🗑️ Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                }
+              })
+            )}
           </tbody>
         </table>
       </div>

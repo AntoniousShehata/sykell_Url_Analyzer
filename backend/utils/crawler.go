@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -79,7 +81,18 @@ func CrawlURL(target string) (*CrawlResult, error) {
 		return nil, fmt.Errorf("website error: %s returned %d %s", target, res.StatusCode, res.Status)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(res.Body)
+	// Handle GZIP decompression manually
+	var reader io.Reader = res.Body
+	if res.Header.Get("Content-Encoding") == "gzip" {
+		gzipReader, err := gzip.NewReader(res.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create gzip reader: %v", err)
+		}
+		defer gzipReader.Close()
+		reader = gzipReader
+	}
+
+	doc, err := goquery.NewDocumentFromReader(reader)
 	if err != nil {
 		return nil, fmt.Errorf("parsing error: failed to parse HTML from %s: %v", target, err)
 	}
@@ -88,6 +101,7 @@ func CrawlURL(target string) (*CrawlResult, error) {
 	htmlVer := "HTML5" // default
 
 	title := strings.TrimSpace(doc.Find("title").First().Text())
+
 	base, err := url.Parse(target)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse base URL: %v", err)
