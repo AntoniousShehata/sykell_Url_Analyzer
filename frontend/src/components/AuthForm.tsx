@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { login, register, LoginRequest, RegisterRequest } from '../api/api';
 
 interface AuthFormProps {
@@ -14,6 +14,14 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
     email: '',
     password: '',
   });
+
+  // Add login-active class to body when component mounts, remove on unmount
+  useEffect(() => {
+    document.body.classList.add('login-active');
+    return () => {
+      document.body.classList.remove('login-active');
+    };
+  }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
