@@ -1,25 +1,29 @@
-import React, { useState, useRef } from 'react';
+import React, { useRef } from 'react';
 import UrlTable, { UrlTableRef } from './UrlTable';
 import UrlForm from './UrlForm';
 import { UrlData } from '../api/api';
 
 const Dashboard: React.FC = () => {
-  const [refreshKey, setRefreshKey] = useState(0);
   const urlTableRef = useRef<UrlTableRef>(null);
 
   const handleUrlAdded = (newUrl: UrlData) => {
+    // Immediate refresh after URL is added
+    if (urlTableRef.current) {
+      urlTableRef.current.refresh();
+    }
+    
+    // Additional refresh after a short delay to catch any status updates
     setTimeout(() => {
       if (urlTableRef.current) {
-        setRefreshKey(prev => prev + 1);
         urlTableRef.current.refresh();
       }
-    }, 5000);
+    }, 2000);
   };
 
   return (
     <div className="main-content">
       <UrlForm onUrlAdded={handleUrlAdded} />
-      <UrlTable key={refreshKey} ref={urlTableRef} />
+      <UrlTable ref={urlTableRef} />
     </div>
   );
 };
