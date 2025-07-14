@@ -94,6 +94,59 @@ When you submit a URL, the backend:
 
 The crawler is pretty robust - it handles timeouts, different error types, and uses proper User-Agent headers to avoid being blocked.
 
+## Testing
+
+The project includes comprehensive unit tests for both backend and frontend components.
+
+### Backend Tests (Go)
+
+Run all backend tests:
+```bash
+cd backend
+go test ./...
+
+# Run with coverage
+go test -cover ./...
+
+# Run specific test packages
+go test ./handlers
+go test ./utils
+go test ./middleware
+```
+
+**Test Coverage:**
+- **Authentication:** User registration, login, JWT tokens, password validation
+- **URL Handlers:** URL management, pagination, search, bulk operations
+- **Crawler:** HTML parsing, link extraction, broken link detection, timeout handling
+- **Middleware:** JWT validation, authorization flow
+
+### Frontend Tests (React/TypeScript)
+
+Run all frontend tests:
+```bash
+cd frontend
+npm test
+
+# Run with coverage
+npm test -- --coverage
+
+# Run specific component tests
+npm test AuthForm.test.tsx
+npm test UrlForm.test.tsx
+npm test UrlTable.test.tsx
+```
+
+**Test Coverage:**
+- **Components:** Form validation, user interactions, error handling
+- **API:** HTTP requests, authentication, error handling
+- **User Flows:** Login, URL submission, data management
+
+### Test Quality Assurance
+- All tests are isolated and independent
+- External dependencies are properly mocked
+- Tests cover both success and error scenarios
+- Maintains high code coverage across all modules
+
 ## Configuration
 
 ### Environment Variables
@@ -123,15 +176,6 @@ JWT_SECRET=your_jwt_secret
 GIN_MODE=release
 ```
 
-## Common Issues
-
-**Database won't connect:** Make sure Docker is running and the MySQL container started successfully.
-
-**Frontend can't reach backend:** Check if the backend is running on port 8080 and not blocked by firewall.
-
-**Analysis gets stuck:** Some websites block automated requests. The crawler has a 60-second timeout for slow sites.
-
-**PowerShell syntax errors:** Use semicolons instead of `&&` in PowerShell commands.
 
 ## Database Schema
 
@@ -143,23 +187,3 @@ GIN_MODE=release
 
 **broken_links table:**
 - Detailed broken link information (id, url_id, link_url, status_code, error_message)
-
-## Contributing
-
-If you want to contribute:
-1. Fork the repo
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-Keep the Go code clean and add TypeScript types for new frontend features.
-
-## License
-
-MIT License - feel free to use this however you want.
-
-## Why I Built This
-
-I needed a tool to quickly analyze multiple websites for SEO audits and technical reviews. Most existing tools are either too expensive or don't provide the specific data I wanted. This tool focuses on the technical aspects that matter for web development and SEO.
-
-The concurrent crawling in Go makes it pretty fast, and the React frontend makes it easy to manage large numbers of URLs.
