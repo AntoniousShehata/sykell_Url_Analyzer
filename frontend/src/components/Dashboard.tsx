@@ -7,17 +7,10 @@ const Dashboard: React.FC = () => {
   const urlTableRef = useRef<UrlTableRef>(null);
 
   const handleUrlAdded = (newUrl: UrlData) => {
-    // Immediate refresh after URL is added
+    // Immediately add the URL to the table for instant feedback
     if (urlTableRef.current) {
-      urlTableRef.current.refresh();
+      urlTableRef.current.addNewUrl(newUrl);
     }
-    
-    // Additional refresh after a short delay to catch any status updates
-    setTimeout(() => {
-      if (urlTableRef.current) {
-        urlTableRef.current.refresh();
-      }
-    }, 2000);
   };
 
   return (

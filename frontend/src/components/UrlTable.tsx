@@ -11,6 +11,7 @@ interface PaginationInfo {
 
 export interface UrlTableRef {
   refresh: () => void;
+  addNewUrl: (url: UrlData) => void;
 }
 
 const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
@@ -27,7 +28,9 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [processingUrls, setProcessingUrls] = useState<Set<number>>(new Set());
+  const [analysisProgress, setAnalysisProgress] = useState<Map<number, number>>(new Map());
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastUpdateRef = useRef<number>(0);
 
   const loadUrls = useCallback(async (page?: number, limit?: number, forceRefresh = false) => {
     try {
@@ -43,7 +46,21 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
       };
 
       const response = await fetchUrls(params);
-      setData(response.data);
+      const newData = response.data;
+      
+      // Check for newly completed analyses
+      const previousData = data;
+      newData.forEach(newUrl => {
+        const previousUrl = previousData.find(prev => prev.id === newUrl.id);
+        if (previousUrl && 
+            (previousUrl.status === 'running' || previousUrl.status === 'queued') && 
+            (newUrl.status === 'completed' || newUrl.status === 'error')) {
+          // Analysis just completed - show notification
+          console.log(`Analysis completed for: ${newUrl.url}`);
+        }
+      });
+      
+      setData(newData);
       
       setPagination(prev => ({
         page: response.pagination.page,
@@ -52,16 +69,33 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
         total_pages: Math.ceil(response.pagination.total / response.pagination.limit)
       }));
       
-      // Clear processing state for completed URLs
+      // Update processing state and analysis progress
       setProcessingUrls(prev => {
         const newProcessing = new Set(prev);
-        response.data.forEach(url => {
-          if (url.status === 'completed' || url.status === 'error') {
+        const newProgress = new Map(analysisProgress);
+        
+        newData.forEach(url => {
+          if (url.status === 'running') {
+            newProcessing.add(url.id);
+            // Simulate progress for running analyses
+            const currentProgress = newProgress.get(url.id) || 0;
+            if (currentProgress < 90) {
+              newProgress.set(url.id, Math.min(90, currentProgress + Math.random() * 15));
+            }
+          } else if (url.status === 'queued') {
+            newProcessing.add(url.id);
+            newProgress.set(url.id, 5);
+          } else if (url.status === 'completed' || url.status === 'error') {
             newProcessing.delete(url.id);
+            newProgress.delete(url.id);
           }
         });
+        
+        setAnalysisProgress(newProgress);
         return newProcessing;
       });
+      
+      lastUpdateRef.current = Date.now();
       
     } catch (err) {
       console.error('Error loading URLs:', err);
@@ -69,19 +103,29 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchTerm, pagination.per_page, data.length]);
+  }, [currentPage, searchTerm, pagination.per_page, data, analysisProgress]);
 
-  // Set up polling for real-time updates
+  // Enhanced polling with dynamic intervals
   useEffect(() => {
-    const hasRunningUrls = data.some(url => url.status === 'running' || url.status === 'queued');
+    const hasActiveAnalysis = data.some(url => url.status === 'running' || url.status === 'queued');
     
-    if (hasRunningUrls) {
-      intervalRef.current = setInterval(() => {
-        loadUrls(currentPage, pagination.per_page, false);
-      }, 3000); // Poll every 3 seconds
-    } else if (intervalRef.current) {
+    if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
+    }
+    
+    if (hasActiveAnalysis) {
+      // Faster polling during active analysis
+      const pollInterval = 1500; // 1.5 seconds for active analysis
+      intervalRef.current = setInterval(() => {
+        loadUrls(currentPage, pagination.per_page, false);
+      }, pollInterval);
+    } else {
+      // Slower polling for general updates
+      const pollInterval = 10000; // 10 seconds for general updates
+      intervalRef.current = setInterval(() => {
+        loadUrls(currentPage, pagination.per_page, false);
+      }, pollInterval);
     }
     
     return () => {
@@ -90,6 +134,29 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
       }
     };
   }, [data, loadUrls, currentPage, pagination.per_page]);
+
+  // Add method to handle new URL additions
+  const addNewUrl = useCallback((newUrl: UrlData) => {
+    setData(prevData => {
+      // Add the new URL to the beginning of the list
+      const updatedData = [newUrl, ...prevData.slice(0, pagination.per_page - 1)];
+      return updatedData;
+    });
+    
+    // Set it as processing
+    setProcessingUrls(prev => new Set([...Array.from(prev), newUrl.id]));
+    setAnalysisProgress(prev => new Map([...Array.from(prev), [newUrl.id, 5]]));
+    
+    // Force immediate refresh
+    setTimeout(() => {
+      loadUrls(currentPage, pagination.per_page, true);
+    }, 500);
+  }, [pagination.per_page, currentPage, loadUrls]);
+
+  useImperativeHandle(ref, () => ({
+    refresh: () => loadUrls(currentPage, pagination.per_page, true),
+    addNewUrl: addNewUrl
+  }));
 
   useEffect(() => {
     loadUrls();
@@ -104,119 +171,86 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
     }
   }, [pagination.per_page, loadUrls]);
 
-  const refreshFromFirstPage = useCallback(async () => {
-    setCurrentPage(1);
-    await loadUrls(1, pagination.per_page, true);
-    setSelectedUrls(new Set());
-  }, [loadUrls, pagination.per_page]);
-
-  useImperativeHandle(ref, () => ({
-    refresh: refreshFromFirstPage
-  }));
-
-  const handleDelete = useCallback(async (id: number) => {
+  const handleReanalyze = async (id: number) => {
     try {
-      setError(null);
-      setProcessingUrls(prev => new Set(prev).add(id));
-      
-      await deleteUrl(id);
-      
-      // Immediate UI update - remove the deleted item
-      setData(prev => prev.filter(url => url.id !== id));
-      setPagination(prev => ({
-        ...prev,
-        total: prev.total - 1
-      }));
-      
-      setSelectedUrls(prev => {
-        const newSelected = new Set(prev);
-        newSelected.delete(id);
-        return newSelected;
-      });
-      
-      // Refresh to get accurate data
-      setTimeout(() => {
-        refreshFromFirstPage();
-      }, 500);
-      
-    } catch (err) {
-      console.error('Error deleting URL:', err);
-      setError('Failed to delete URL');
-    } finally {
-      setProcessingUrls(prev => {
-        const newProcessing = new Set(prev);
-        newProcessing.delete(id);
-        return newProcessing;
-      });
-    }
-  }, [refreshFromFirstPage]);
-
-  const handleReanalyze = useCallback(async (id: number) => {
-    try {
-      setError(null);
-      setProcessingUrls(prev => new Set(prev).add(id));
+      setProcessingUrls(prev => new Set([...Array.from(prev), id]));
+      setAnalysisProgress(prev => new Map([...Array.from(prev), [id, 5]]));
       
       await reanalyzeUrl(id);
       
-      // Immediate UI update - set status to queued
-      setData(prev => prev.map(url => 
-        url.id === id ? { ...url, status: 'queued' as const } : url
-      ));
-      
-      // Refresh to get updated data
+      // Immediate refresh to show the updated status
       setTimeout(() => {
-        loadUrls(currentPage, pagination.per_page, false);
-      }, 1000);
+        loadUrls(currentPage, pagination.per_page, true);
+      }, 200);
       
     } catch (err) {
       console.error('Error reanalyzing URL:', err);
-      setError('Failed to reanalyze URL');
-    } finally {
-      setTimeout(() => {
-        setProcessingUrls(prev => {
-          const newProcessing = new Set(prev);
-          newProcessing.delete(id);
-          return newProcessing;
-        });
-      }, 1000);
+      setProcessingUrls(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(id);
+        return newSet;
+      });
+      setAnalysisProgress(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(id);
+        return newMap;
+      });
     }
-  }, [currentPage, pagination.per_page, loadUrls]);
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!window.confirm('Are you sure you want to delete this URL?')) {
+      return;
+    }
+
+    try {
+      await deleteUrl(id);
+      loadUrls(currentPage, pagination.per_page, true);
+    } catch (err) {
+      console.error('Error deleting URL:', err);
+    }
+  };
 
   const handleBulkDelete = async () => {
     if (selectedUrls.size === 0) return;
+    
+    if (!window.confirm(`Are you sure you want to delete ${selectedUrls.size} URL(s)?`)) {
+      return;
+    }
 
     try {
-      setError(null);
-      const idsToDelete = Array.from(selectedUrls);
+      const urlsArray = Array.from(selectedUrls);
+      await bulkDeleteUrls(urlsArray);
+      setSelectedUrls(new Set());
+      loadUrls(currentPage, pagination.per_page, true);
+    } catch (err) {
+      console.error('Error deleting URLs:', err);
+    }
+  };
+
+  const handleBulkReanalyze = async () => {
+    if (selectedUrls.size === 0) return;
+    
+    try {
+      // Mark all selected URLs as processing
+      setProcessingUrls(prev => new Set([...Array.from(prev), ...Array.from(selectedUrls)]));
+      const newProgress = new Map(analysisProgress);
+      Array.from(selectedUrls).forEach(id => newProgress.set(id, 5));
+      setAnalysisProgress(newProgress);
       
-      // Set processing state for all selected URLs
-      setProcessingUrls(prev => {
-        const newProcessing = new Set(prev);
-        idsToDelete.forEach(id => newProcessing.add(id));
-        return newProcessing;
-      });
-      
-      await bulkDeleteUrls(idsToDelete);
-      
-      // Immediate UI update - remove deleted items
-      setData(prev => prev.filter(url => !selectedUrls.has(url.id)));
-      setPagination(prev => ({
-        ...prev,
-        total: prev.total - selectedUrls.size
-      }));
+      // Start reanalysis for each URL
+      const promises = Array.from(selectedUrls).map(id => reanalyzeUrl(id));
+      await Promise.all(promises);
       
       setSelectedUrls(new Set());
       
-      // Refresh to get accurate data
+      // Immediate refresh
       setTimeout(() => {
-        refreshFromFirstPage();
-      }, 500);
+        loadUrls(currentPage, pagination.per_page, true);
+      }, 200);
       
     } catch (err) {
-      console.error('Error bulk deleting URLs:', err);
-      setError('Failed to delete URLs');
-    } finally {
-      setProcessingUrls(new Set());
+      console.error('Error reanalyzing URLs:', err);
     }
   };
 
@@ -240,20 +274,56 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
 
   const getStatusDisplay = (status: string, urlId: number) => {
     const isProcessing = processingUrls.has(urlId);
+    const progress = analysisProgress.get(urlId) || 0;
     
-    if (isProcessing) {
-      return <span style={{ color: '#3b82f6' }}>Processing...</span>;
+    if (isProcessing || status === 'running') {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div className="spinner" style={{
+            width: '16px',
+            height: '16px',
+            border: '2px solid #e5e7eb',
+            borderTop: '2px solid #3b82f6',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite'
+          }}></div>
+          <span style={{ color: '#3b82f6' }}>
+            {status === 'running' ? `Analyzing... ${Math.round(progress)}%` : 'Processing...'}
+          </span>
+        </div>
+      );
+    }
+    
+    if (status === 'queued') {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{
+            width: '16px',
+            height: '16px',
+            border: '2px solid #f59e0b',
+            borderRadius: '50%',
+            animation: 'pulse 2s ease-in-out infinite'
+          }}></div>
+          <span style={{ color: '#f59e0b' }}>Queued</span>
+        </div>
+      );
     }
     
     switch (status) {
-      case 'queued':
-        return <span style={{ color: '#f59e0b' }}>Queued</span>;
-      case 'running':
-        return <span style={{ color: '#3b82f6' }}>Running...</span>;
       case 'completed':
-        return <span style={{ color: '#10b981' }}>Completed</span>;
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ color: '#10b981', fontSize: '16px' }}>✓</span>
+            <span style={{ color: '#10b981' }}>Completed</span>
+          </div>
+        );
       case 'error':
-        return <span style={{ color: '#ef4444' }}>Error</span>;
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ color: '#ef4444', fontSize: '16px' }}>✗</span>
+            <span style={{ color: '#ef4444' }}>Error</span>
+          </div>
+        );
       default:
         return <span style={{ color: '#6b7280' }}>Unknown</span>;
     }
@@ -371,6 +441,13 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
             >
               Delete Selected ({selectedUrls.size})
             </button>
+            <button 
+              onClick={handleBulkReanalyze} 
+              className="bulk-reanalyze-btn"
+              disabled={processingUrls.size > 0}
+            >
+              Reanalyze Selected ({selectedUrls.size})
+            </button>
           </div>
         )}
       </div>
@@ -426,79 +503,40 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
                           </div>
                         </a>
                       </td>
-                <td className="status-cell">
-                  {getStatusDisplay(url.status, url.id)}
-                </td>
-                <td className="links-cell">
-                  <div className="links-stats">
-                    <span className="internal-links">
-                      <span className="label">Internal:</span>
-                      <span className="count">{url.internal_links || 0}</span>
-                    </span>
-                    <span className="external-links">
-                      <span className="label">External:</span>
-                      <span className="count">{url.external_links || 0}</span>
-                    </span>
-                    {url.broken_links > 0 && (
-                      <span className="broken-links">
-                        <span className="label">Broken:</span>
-                        <span className="count">{url.broken_links || 0}</span>
-                      </span>
-                    )}
-                  </div>
-                </td>
-                <td className="date-cell">{formatDate(url.created_at)}</td>
-                <td className="actions-cell">
-                  <Link to={`/url/${url.id}`} className="view-details-btn">
-                    📊 Details
-                  </Link>
-                  <button
-                    onClick={() => handleReanalyze(url.id)}
-                    className="reanalyze-btn"
-                    title="Reanalyze this URL"
-                    disabled={processingUrls.has(url.id) || url.status === 'running'}
-                  >
-                    🔄 Reanalyze
-                  </button>
-                  <button
-                    onClick={() => handleDelete(url.id)}
-                    className="delete-btn"
-                    title="Delete this URL"
-                    disabled={processingUrls.has(url.id)}
-                  >
-                    🗑️ Delete
-                  </button>
-                </td>
-              </tr>
-                  );
-                } catch (error) {
-                  // Handle rendering errors for problematic URLs
-                  console.error('Error rendering URL:', url.id, error);
-                  return (
-                    <tr key={url.id}>
-                      <td className="checkbox-cell">
-                        <input
-                          type="checkbox"
-                          checked={selectedUrls.has(url.id)}
-                          onChange={() => toggleSelectUrl(url.id)}
-                        />
-                      </td>
-                      <td className="title-cell">
-                        <div className="title-content">
-                          <div className="title-text">Error loading URL</div>
-                          <div className="website-name">Problem with URL data</div>
-                        </div>
-                      </td>
                       <td className="status-cell">
-                        <span style={{ color: '#ef4444' }}>Error</span>
+                        {getStatusDisplay(url.status, url.id)}
                       </td>
                       <td className="links-cell">
                         <div className="links-stats">
-                          <span>Unable to display</span>
+                          <span className="internal-links">
+                            <span className="label">Internal:</span>
+                            <span className="count">{url.internal_links || 0}</span>
+                          </span>
+                          <span className="external-links">
+                            <span className="label">External:</span>
+                            <span className="count">{url.external_links || 0}</span>
+                          </span>
+                          {url.broken_links > 0 && (
+                            <span className="broken-links">
+                              <span className="label">Broken:</span>
+                              <span className="count">{url.broken_links || 0}</span>
+                            </span>
+                          )}
                         </div>
                       </td>
-                      <td className="date-cell">-</td>
+                      <td className="date-cell">{formatDate(url.created_at)}</td>
                       <td className="actions-cell">
+                        <Link to={`/url/${url.id}`} className="view-details-btn">
+                          📊 Details
+                        </Link>
+                        <button
+                          onClick={() => handleReanalyze(url.id)}
+                          className="reanalyze-btn"
+                          title="Reanalyze this URL"
+                          disabled={processingUrls.has(url.id) || url.status === 'running'}
+                        >
+                          🔄 Reanalyze
+                        </button>
                         <button
                           onClick={() => handleDelete(url.id)}
                           className="delete-btn"
@@ -507,6 +545,15 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
                         >
                           🗑️ Delete
                         </button>
+                      </td>
+                    </tr>
+                  );
+                } catch (error) {
+                  console.error('Error rendering URL row:', error);
+                  return (
+                    <tr key={url.id}>
+                      <td colSpan={6} style={{ textAlign: 'center', padding: '10px', color: '#ef4444' }}>
+                        Error displaying URL data
                       </td>
                     </tr>
                   );
@@ -520,17 +567,19 @@ const UrlTable = forwardRef<UrlTableRef>((props, ref) => {
       {pagination.total_pages > 1 && (
         <div className="pagination">
           <button
-            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+            onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
             disabled={currentPage === 1}
+            className="pagination-btn"
           >
             Previous
           </button>
-          <span>
-            Page {currentPage} of {pagination.total_pages}
+          <span className="pagination-info">
+            Page {currentPage} of {pagination.total_pages} ({pagination.total} total URLs)
           </span>
           <button
-            onClick={() => setCurrentPage(prev => Math.min(pagination.total_pages, prev + 1))}
+            onClick={() => setCurrentPage(Math.min(pagination.total_pages, currentPage + 1))}
             disabled={currentPage === pagination.total_pages}
+            className="pagination-btn"
           >
             Next
           </button>
