@@ -6,7 +6,7 @@ import (
 	"sykell-analyze/backend/utils"
 )
 
-func main() {
+func testWiki() {
 	// Test with the specific Wikipedia URL
 	testURL := "https://en.wikipedia.org/wiki/Steve_Wozniak"
 	fmt.Printf("Testing URL: %s\n", testURL)

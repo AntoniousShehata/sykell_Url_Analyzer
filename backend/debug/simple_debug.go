@@ -6,7 +6,7 @@ import (
 	"sykell-analyze/backend/utils"
 )
 
-func main() {
+func simpleDebug() {
 	// Test with httpbin.org which returns predictable HTML
 	testURL := "https://httpbin.org/html"
 	fmt.Printf("Testing URL: %s\n", testURL)

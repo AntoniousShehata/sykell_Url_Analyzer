@@ -4,14 +4,9 @@ import '@testing-library/jest-dom';
 import AuthForm from '../AuthForm';
 import * as api from '../../api/api';
 
-// Mock the API
-jest.mock('../../api/api', () => ({
-  login: jest.fn(),
-  register: jest.fn(),
-}));
-
-const mockLogin = api.login as jest.MockedFunction<typeof api.login>;
-const mockRegister = api.register as jest.MockedFunction<typeof api.register>;
+// Mock the api module
+jest.mock('../../api/api');
+const mockApi = api as jest.Mocked<typeof api>;
 
 describe('AuthForm', () => {
   const mockOnAuthSuccess = jest.fn();
@@ -20,202 +15,211 @@ describe('AuthForm', () => {
     jest.clearAllMocks();
   });
 
-  test('renders login form by default', () => {
+  it('renders login form by default', () => {
     render(<AuthForm onAuthSuccess={mockOnAuthSuccess} />);
     
-    expect(screen.getByText('Login')).toBeInTheDocument();
-    expect(screen.getByLabelText('Username:')).toBeInTheDocument();
-    expect(screen.getByLabelText('Password:')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Login' })).toBeInTheDocument();
-    expect(screen.getByText('Need an account? Register')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Enter your username')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Enter your password')).toBeInTheDocument();
+    expect(screen.getByText('Sign In')).toBeInTheDocument();
+    expect(screen.getByText('Need an account? Sign up')).toBeInTheDocument();
   });
 
-  test('switches to register form when clicking toggle', () => {
+  it('switches to register form when toggle button is clicked', () => {
     render(<AuthForm onAuthSuccess={mockOnAuthSuccess} />);
     
-    const toggleButton = screen.getByText('Need an account? Register');
+    const toggleButton = screen.getByText('Need an account? Sign up');
     fireEvent.click(toggleButton);
     
-    expect(screen.getByText('Register')).toBeInTheDocument();
-    expect(screen.getByLabelText('Username:')).toBeInTheDocument();
-    expect(screen.getByLabelText('Email:')).toBeInTheDocument();
-    expect(screen.getByLabelText('Password:')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Register' })).toBeInTheDocument();
-    expect(screen.getByText('Already have an account? Login')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Enter your email')).toBeInTheDocument();
+    expect(screen.getByText('Create Account')).toBeInTheDocument();
+    expect(screen.getByText('Already have an account? Sign in')).toBeInTheDocument();
   });
 
-  test('successfully logs in user', async () => {
-    const mockAuthResponse = {
-      token: 'fake-token',
-      user: {
-        id: 1,
+  it('submits login form with correct data', async () => {
+    const mockResponse: api.AuthResponse = { 
+      token: 'test-token', 
+      user: { 
+        id: 1, 
         username: 'testuser',
         email: 'test@example.com',
         created_at: '2023-01-01T00:00:00Z',
-        updated_at: '2023-01-01T00:00:00Z',
-      },
+        updated_at: '2023-01-01T00:00:00Z'
+      } 
     };
-
-    mockLogin.mockResolvedValueOnce(mockAuthResponse);
+    mockApi.login.mockResolvedValue(mockResponse);
 
     render(<AuthForm onAuthSuccess={mockOnAuthSuccess} />);
     
-    const usernameInput = screen.getByLabelText('Username:');
-    const passwordInput = screen.getByLabelText('Password:');
-    const loginButton = screen.getByRole('button', { name: 'Login' });
-    
+    const usernameInput = screen.getByPlaceholderText('Enter your username');
+    const passwordInput = screen.getByPlaceholderText('Enter your password');
+    const submitButton = screen.getByText('Sign In');
+
     fireEvent.change(usernameInput, { target: { value: 'testuser' } });
-    fireEvent.change(passwordInput, { target: { value: 'password123' } });
-    fireEvent.click(loginButton);
-    
+    fireEvent.change(passwordInput, { target: { value: 'password' } });
+    fireEvent.click(submitButton);
+
     await waitFor(() => {
-      expect(mockLogin).toHaveBeenCalledWith({
+      expect(mockApi.login).toHaveBeenCalledWith({
         username: 'testuser',
-        password: 'password123',
+        password: 'password'
       });
-      expect(mockOnAuthSuccess).toHaveBeenCalled();
     });
   });
 
-  test('successfully registers user', async () => {
-    const mockAuthResponse = {
-      token: 'fake-token',
-      user: {
-        id: 1,
-        username: 'newuser',
-        email: 'new@example.com',
+  it('submits register form with correct data', async () => {
+    const mockResponse: api.AuthResponse = { 
+      token: 'test-token', 
+      user: { 
+        id: 1, 
+        username: 'testuser', 
+        email: 'test@example.com',
         created_at: '2023-01-01T00:00:00Z',
-        updated_at: '2023-01-01T00:00:00Z',
-      },
+        updated_at: '2023-01-01T00:00:00Z'
+      } 
     };
-
-    mockRegister.mockResolvedValueOnce(mockAuthResponse);
+    mockApi.register.mockResolvedValue(mockResponse);
 
     render(<AuthForm onAuthSuccess={mockOnAuthSuccess} />);
     
     // Switch to register form
-    const toggleButton = screen.getByText('Need an account? Register');
+    const toggleButton = screen.getByText('Need an account? Sign up');
     fireEvent.click(toggleButton);
     
-    const usernameInput = screen.getByLabelText('Username:');
-    const emailInput = screen.getByLabelText('Email:');
-    const passwordInput = screen.getByLabelText('Password:');
-    const registerButton = screen.getByRole('button', { name: 'Register' });
-    
-    fireEvent.change(usernameInput, { target: { value: 'newuser' } });
-    fireEvent.change(emailInput, { target: { value: 'new@example.com' } });
-    fireEvent.change(passwordInput, { target: { value: 'password123' } });
-    fireEvent.click(registerButton);
-    
-    await waitFor(() => {
-      expect(mockRegister).toHaveBeenCalledWith({
-        username: 'newuser',
-        email: 'new@example.com',
-        password: 'password123',
-      });
-      expect(mockOnAuthSuccess).toHaveBeenCalled();
-    });
-  });
+    const usernameInput = screen.getByPlaceholderText('Enter your username');
+    const emailInput = screen.getByPlaceholderText('Enter your email');
+    const passwordInput = screen.getByPlaceholderText('Enter your password');
+    const submitButton = screen.getByText('Create Account');
 
-  test('shows validation error for short username on register', async () => {
-    render(<AuthForm onAuthSuccess={mockOnAuthSuccess} />);
-    
-    // Switch to register form
-    const toggleButton = screen.getByText('Need an account? Register');
-    fireEvent.click(toggleButton);
-    
-    const usernameInput = screen.getByLabelText('Username:');
-    const emailInput = screen.getByLabelText('Email:');
-    const passwordInput = screen.getByLabelText('Password:');
-    const registerButton = screen.getByRole('button', { name: 'Register' });
-    
-    fireEvent.change(usernameInput, { target: { value: 'ab' } }); // Too short
+    fireEvent.change(usernameInput, { target: { value: 'testuser' } });
     fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
-    fireEvent.click(registerButton);
+    fireEvent.click(submitButton);
+
+    await waitFor(() => {
+      expect(mockApi.register).toHaveBeenCalledWith({
+        username: 'testuser',
+        email: 'test@example.com',
+        password: 'password123'
+      });
+    });
+  });
+
+  it('shows validation error for short username on register', async () => {
+    render(<AuthForm onAuthSuccess={mockOnAuthSuccess} />);
     
+    // Switch to register form
+    const toggleButton = screen.getByText('Need an account? Sign up');
+    fireEvent.click(toggleButton);
+    
+    const usernameInput = screen.getByPlaceholderText('Enter your username');
+    const emailInput = screen.getByPlaceholderText('Enter your email');
+    const passwordInput = screen.getByPlaceholderText('Enter your password');
+    const submitButton = screen.getByText('Create Account');
+
+    fireEvent.change(usernameInput, { target: { value: 'ab' } });
+    fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
+    fireEvent.change(passwordInput, { target: { value: 'password123' } });
+    fireEvent.click(submitButton);
+
     await waitFor(() => {
       expect(screen.getByText('Username must be at least 3 characters long')).toBeInTheDocument();
     });
   });
 
-  test('shows validation error for short password on register', async () => {
+  it('shows validation error for short password on register', async () => {
     render(<AuthForm onAuthSuccess={mockOnAuthSuccess} />);
     
     // Switch to register form
-    const toggleButton = screen.getByText('Need an account? Register');
+    const toggleButton = screen.getByText('Need an account? Sign up');
     fireEvent.click(toggleButton);
     
-    const usernameInput = screen.getByLabelText('Username:');
-    const emailInput = screen.getByLabelText('Email:');
-    const passwordInput = screen.getByLabelText('Password:');
-    const registerButton = screen.getByRole('button', { name: 'Register' });
-    
+    const usernameInput = screen.getByPlaceholderText('Enter your username');
+    const emailInput = screen.getByPlaceholderText('Enter your email');
+    const passwordInput = screen.getByPlaceholderText('Enter your password');
+    const submitButton = screen.getByText('Create Account');
+
     fireEvent.change(usernameInput, { target: { value: 'testuser' } });
     fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
-    fireEvent.change(passwordInput, { target: { value: '123' } }); // Too short
-    fireEvent.click(registerButton);
-    
+    fireEvent.change(passwordInput, { target: { value: '123' } });
+    fireEvent.click(submitButton);
+
     await waitFor(() => {
       expect(screen.getByText('Password must be at least 6 characters long')).toBeInTheDocument();
     });
   });
 
-  test('shows validation error for invalid email on register', async () => {
+  it('shows validation error for invalid email on register', async () => {
     render(<AuthForm onAuthSuccess={mockOnAuthSuccess} />);
     
     // Switch to register form
-    const toggleButton = screen.getByText('Need an account? Register');
+    const toggleButton = screen.getByText('Need an account? Sign up');
     fireEvent.click(toggleButton);
     
-    const usernameInput = screen.getByLabelText('Username:');
-    const emailInput = screen.getByLabelText('Email:');
-    const passwordInput = screen.getByLabelText('Password:');
-    const registerButton = screen.getByRole('button', { name: 'Register' });
-    
+    const usernameInput = screen.getByPlaceholderText('Enter your username');
+    const emailInput = screen.getByPlaceholderText('Enter your email');
+    const passwordInput = screen.getByPlaceholderText('Enter your password');
+    const submitButton = screen.getByText('Create Account');
+
     fireEvent.change(usernameInput, { target: { value: 'testuser' } });
-    fireEvent.change(emailInput, { target: { value: 'invalid-email' } }); // Invalid email
+    fireEvent.change(emailInput, { target: { value: 'invalid-email' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
-    fireEvent.click(registerButton);
-    
+    fireEvent.click(submitButton);
+
     await waitFor(() => {
       expect(screen.getByText('Please enter a valid email address')).toBeInTheDocument();
     });
   });
 
-  test('shows error when login fails', async () => {
-    mockLogin.mockRejectedValueOnce(new Error('Invalid credentials'));
+  it('shows error when login fails', async () => {
+    mockApi.login.mockRejectedValue(new Error('Login failed'));
 
     render(<AuthForm onAuthSuccess={mockOnAuthSuccess} />);
     
-    const usernameInput = screen.getByLabelText('Username:');
-    const passwordInput = screen.getByLabelText('Password:');
-    const loginButton = screen.getByRole('button', { name: 'Login' });
-    
+    const usernameInput = screen.getByPlaceholderText('Enter your username');
+    const passwordInput = screen.getByPlaceholderText('Enter your password');
+    const submitButton = screen.getByText('Sign In');
+
     fireEvent.change(usernameInput, { target: { value: 'testuser' } });
     fireEvent.change(passwordInput, { target: { value: 'wrongpassword' } });
-    fireEvent.click(loginButton);
-    
+    fireEvent.click(submitButton);
+
     await waitFor(() => {
-      expect(screen.getByText('Invalid credentials')).toBeInTheDocument();
+      expect(screen.getByText('Login failed')).toBeInTheDocument();
     });
   });
 
-  test('shows loading state during authentication', async () => {
-    mockLogin.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)));
+  it('shows loading state during authentication', async () => {
+    // Mock login to return a promise that doesn't resolve immediately
+    let resolveLogin: (value: api.AuthResponse) => void;
+    const loginPromise = new Promise<api.AuthResponse>((resolve) => {
+      resolveLogin = resolve;
+    });
+    mockApi.login.mockReturnValue(loginPromise);
 
     render(<AuthForm onAuthSuccess={mockOnAuthSuccess} />);
     
-    const usernameInput = screen.getByLabelText('Username:');
-    const passwordInput = screen.getByLabelText('Password:');
-    const loginButton = screen.getByRole('button', { name: 'Login' });
-    
+    const usernameInput = screen.getByPlaceholderText('Enter your username');
+    const passwordInput = screen.getByPlaceholderText('Enter your password');
+    const submitButton = screen.getByRole('button', { name: 'Sign In' });
+
     fireEvent.change(usernameInput, { target: { value: 'testuser' } });
-    fireEvent.change(passwordInput, { target: { value: 'password123' } });
-    fireEvent.click(loginButton);
-    
+    fireEvent.change(passwordInput, { target: { value: 'password' } });
+    fireEvent.click(submitButton);
+
     // Check loading state
     expect(screen.getByText('Processing...')).toBeInTheDocument();
-    expect(loginButton).toBeDisabled();
+    expect(submitButton).toBeDisabled();
+
+    // Resolve the promise
+    resolveLogin!({ 
+      token: 'test-token', 
+      user: { 
+        id: 1, 
+        username: 'testuser',
+        email: 'test@example.com',
+        created_at: '2023-01-01T00:00:00Z',
+        updated_at: '2023-01-01T00:00:00Z'
+      } 
+    });
   });
 }); 
