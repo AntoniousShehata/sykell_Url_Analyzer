@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 
 	"sykell-analyze/backend/config"
 	"sykell-analyze/backend/utils"
@@ -12,6 +13,29 @@ import (
 )
 
 func main() {
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: go run . <debug_function>")
+		fmt.Println("Available functions:")
+		fmt.Println("  urls    - Test database URLs and crawler")
+		fmt.Println("  simple  - Simple crawler test with httpbin.org")
+		fmt.Println("  wiki    - Test crawler with Wikipedia URL")
+		return
+	}
+
+	switch os.Args[1] {
+	case "urls":
+		debugURLs()
+	case "simple":
+		simpleDebug()
+	case "wiki":
+		testWiki()
+	default:
+		fmt.Printf("Unknown function: %s\n", os.Args[1])
+		fmt.Println("Available functions: urls, simple, wiki")
+	}
+}
+
+func debugURLs() {
 	// Connect to database
 	if err := config.ConnectDB(); err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -39,7 +63,11 @@ func main() {
 
 		fmt.Printf("ID: %d\n", id)
 		fmt.Printf("URL: %s\n", url)
-		fmt.Printf("Title: %s\n", title.String)
+		if title.Valid {
+			fmt.Printf("Title: %s\n", title.String)
+		} else {
+			fmt.Printf("Title: (null)\n")
+		}
 		fmt.Printf("Status: %s\n", status)
 		fmt.Printf("Internal Links: %d\n", internalLinks)
 		fmt.Printf("External Links: %d\n", externalLinks)
@@ -77,6 +105,7 @@ func main() {
 	result2, err := utils.CrawlURL(testURL2)
 	if err != nil {
 		log.Printf("Crawler Error: %v\n", err)
+		fmt.Println("Skipping detailed output for problematic URL")
 		return
 	}
 
